@@ -12,6 +12,10 @@ from sklearn.preprocessing import OneHotEncoder
 from sklearn.neighbors import NearestNeighbors
 from scipy.sparse import hstack
 
+
+!git clone https://github.com/B-Wayne00/CapFiles.git
+%cd CapFiles/RecipeApp.py
+
 # ---------- Load and Preprocess Data ----------
 @st.cache_data
 def load_data():
