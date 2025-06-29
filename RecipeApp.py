@@ -1,5 +1,3 @@
-!pip install -q streamlit
-
 import streamlit as st
 import pandas as pd
 import ast
@@ -11,18 +9,16 @@ from sklearn.decomposition import TruncatedSVD
 from sklearn.preprocessing import OneHotEncoder
 from sklearn.neighbors import NearestNeighbors
 from scipy.sparse import hstack
-
-
-!git clone https://github.com/B-Wayne00/CapFiles.git
-%cd CapFiles/RecipeApp.py
+import matplotlib.pyplot as plt
 
 # ---------- Load and Preprocess Data ----------
 @st.cache_data
 def load_data():
-    df = pd.read_csv('RecipesFin.csv')
+    url = "https://raw.githubusercontent.com/B-Wayne00/CapFiles/main/RecipesFin.csv"
+    df = pd.read_csv(url)
 
     if 'cuisine_type' not in df.columns:
-        st.error("The column 'cuisine_type' is missing in RecipesFin.csv")
+        st.error("Missing 'cuisine_type' column.")
         st.stop()
 
     df['ingredient_list'] = df['ingredients'].apply(lambda x: ast.literal_eval(x) if isinstance(x, str) else [])
@@ -41,8 +37,8 @@ def load_data():
     df['simplified_ingredients'] = df['ingredient_list'].apply(
         lambda lst: [simplify_ingredient(ing) for ing in lst]
     )
-    df['ingredient_string'] = df['simplified_ingredients'].apply(lambda lst: ' '.join(sorted(lst)))
 
+    df['ingredient_string'] = df['simplified_ingredients'].apply(lambda lst: ' '.join(sorted(lst)))
     df = df.drop_duplicates(subset='ingredient_string').reset_index(drop=True)
 
     vectorizer_dedupe = TfidfVectorizer()
@@ -54,7 +50,6 @@ def load_data():
         for j in range(i + 1, cos_sim.shape[1]):
             if cos_sim[i, j] > threshold:
                 to_remove.add(j)
-
     df = df.drop(df.index[list(to_remove)]).reset_index(drop=True)
 
     all_ingredients = [ing for sublist in df['simplified_ingredients'] for ing in sublist]
@@ -88,7 +83,7 @@ def load_data():
     return df, knn_model, X
 
 
-# ---------- Recommendation Function ----------
+# ---------- Recommendation Logic ----------
 def recommend_similar_recipes(recipe_name, df, knn_model, feature_matrix, n_recommendations=5):
     try:
         recipe_idx = df.index[df['name'] == recipe_name].tolist()[0]
@@ -97,7 +92,7 @@ def recommend_similar_recipes(recipe_name, df, knn_model, feature_matrix, n_reco
 
     recipe_vector = feature_matrix[recipe_idx]
     distances, indices = knn_model.kneighbors(recipe_vector, n_neighbors=n_recommendations + 1)
-    recommended_indices = indices.flatten()[1:]  # skip the recipe itself
+    recommended_indices = indices.flatten()[1:]
 
     recommendations = []
     for idx, dist in zip(recommended_indices, distances.flatten()[1:]):
@@ -111,41 +106,95 @@ def recommend_similar_recipes(recipe_name, df, knn_model, feature_matrix, n_reco
 
     return recommendations
 
+# ---------- Visualization Functions ----------
+def plot_elbow(X):
+    inertia = []
+    K_range = range(2, 16)
+    for k in K_range:
+        km = KMeans(n_clusters=k, random_state=42)
+        km.fit(X)
+        inertia.append(km.inertia_)
 
-# ---------- Streamlit UI ----------
-st.set_page_config(page_title="Recipe Recommender", layout="centered")
-st.title("🍽️ Recipe Recommender")
+    fig, ax = plt.subplots()
+    ax.plot(K_range, inertia, marker='o')
+    ax.set_title("Elbow Method for Optimal k")
+    ax.set_xlabel("Number of Clusters (k)")
+    ax.set_ylabel("Inertia")
+    st.pyplot(fig)
+
+def plot_svd_clusters(X, df):
+    svd = TruncatedSVD(n_components=2, random_state=42)
+    X_reduced = svd.fit_transform(X)
+
+    fig, ax = plt.subplots(figsize=(10, 6))
+    scatter = ax.scatter(X_reduced[:, 0], X_reduced[:, 1], c=df['cluster'], cmap='tab10', alpha=0.7)
+    ax.set_title("2D Visualization of Recipe Clusters")
+    ax.set_xlabel("SVD Component 1")
+    ax.set_ylabel("SVD Component 2")
+    st.pyplot(fig)
+
+def plot_common_ingredients(df):
+    all_ings = [ing for sublist in df['filtered_ingredients'] for ing in sublist]
+    top_ingredients = Counter(all_ings).most_common(10)
+    ingredients, counts = zip(*top_ingredients)
+
+    fig, ax = plt.subplots()
+    ax.barh(ingredients[::-1], counts[::-1], color='salmon')
+    ax.set_title("Top 10 Most Common Ingredients")
+    ax.set_xlabel("Frequency")
+    st.pyplot(fig)
+
+def plot_cuisine_distribution(df):
+    cuisine_counts = df['cuisine_type'].value_counts()
+
+    fig, ax = plt.subplots()
+    cuisine_counts.plot(kind='bar', color='skyblue', ax=ax)
+    ax.set_title("Recipe Count per Cuisine Type")
+    ax.set_ylabel("Number of Recipes")
+    ax.tick_params(axis='x', rotation=45)
+    st.pyplot(fig)
+
+# ---------- Streamlit Layout ----------
+st.set_page_config(layout='wide')
+st.title("🥘 Recipe Recommendation App")
 
 df, knn_model, X = load_data()
 
-st.markdown("You can either:")
-st.markdown("1. **Select a cuisine and recipe**, _or_  \n2. **Enter a User ID** (for future personalization)")
+# Sidebar filters
+st.sidebar.header("🔎 Filters & Options")
+selected_cuisine = st.sidebar.selectbox("Filter by Cuisine", ['All'] + sorted(df['cuisine_type'].unique()))
+user_id = st.sidebar.text_input("Optional User ID for Personalization")
 
-st.divider()
+# Filter recipes
+filtered_df = df if selected_cuisine == 'All' else df[df['cuisine_type'] == selected_cuisine]
+recipe_options = sorted(filtered_df['name'].unique())
+selected_recipe = st.selectbox("Select a Recipe", recipe_options)
 
-# Option 1: Choose a cuisine and recipe
-st.subheader("🔍 Option 1: Choose a Cuisine and a Recipe")
-
-cuisines = sorted(df['cuisine_type'].unique())
-selected_cuisine = st.selectbox("Select a cuisine:", cuisines)
-
-filtered_df = df[df['cuisine_type'] == selected_cuisine]
-recipe_names = filtered_df['name'].sort_values().unique()
-selected_recipe = st.selectbox("Select a recipe:", recipe_names)
-
-# Option 2: Enter user ID
-st.subheader("👤 Option 2: Enter Your User ID")
-user_id = st.text_input("User ID (optional):")
-
-# Trigger recommendations
-if st.button("Get Recommendations"):
-    if user_id:
-        st.info(f"🔐 Personalized recommendations for User ID **{user_id}** coming soon!")
-        # Placeholder for future user-personalized logic
-    else:
-        recommendations = recommend_similar_recipes(selected_recipe, df, knn_model, X)
-        if recommendations:
-            st.success(f"Top recommendations similar to **{selected_recipe}**:")
-            st.table(recommendations)
+if st.button("🔍 Get Recommendations"):
+    if selected_recipe:
+        st.subheader(f"Recommendations similar to **{selected_recipe}**")
+        if user_id:
+            st.caption(f"(Personalization not yet enabled. Using generic model.)")
+        recs = recommend_similar_recipes(selected_recipe, df, knn_model, X)
+        if recs:
+            st.dataframe(pd.DataFrame(recs))
         else:
-            st.warning("No recommendations found for the selected recipe.")
+            st.warning("No similar recipes found.")
+
+# Visualizations section
+st.markdown("---")
+st.header("📊 Visual Insights")
+
+tab1, tab2, tab3, tab4 = st.tabs(["Cluster Elbow Plot", "SVD Clusters", "Top Ingredients", "Cuisine Distribution"])
+
+with tab1:
+    plot_elbow(X)
+
+with tab2:
+    plot_svd_clusters(X, df)
+
+with tab3:
+    plot_common_ingredients(df)
+
+with tab4:
+    plot_cuisine_distribution(df)
